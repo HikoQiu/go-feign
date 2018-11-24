@@ -34,8 +34,40 @@ func runEurekaClient() {
 func Test_AppUrls(t *testing.T) {
     runEurekaClient()
 
-    //lbc :=DefaultFeign.App("Hello word")
-    //lbc.R().SetHeaders(header).SetBody().Post()
+    lbc := DefaultFeign.App("MS-REGISTRY").R()
+    res, err := lbc.SetHeaders(map[string]string{
+        "Content-Type": "application/json",
+    }).Get("/eureka/apps/WM")
+    if err != nil {
+        log.Errorf("err=%s", err.Error())
+    }
+    //log.Debugf("res=%v", res)
 
-    log.Debugf("DiscoveryClient=%v", DefaultFeign.discoveryClient)
+    res, err = DefaultFeign.App("MS-REGISTRY").R().SetHeaders(map[string]string{
+        "Content-Type": "application/json",
+    }).Get("/eureka/apps/SVR-CHANNEL")
+    if err != nil {
+        log.Errorf("err=%s", err.Error())
+    }
+
+    //log.Debugf("res=%v", res)
+
+    res, err = DefaultFeign.App("MS-REGISTRY").R().SetHeaders(map[string]string{
+        "Content-Type": "application/json",
+    }).Get("/eureka/apps/SVR-CHANNEL")
+    if err != nil {
+        log.Errorf("err=%s", err.Error())
+    }
+
+    //log.Debugf("res=%v", res)
+
+    res, err = DefaultFeign.App("MS-REGISTRY").R().SetHeaders(map[string]string{
+        "Content-Type": "application/json",
+    }).Get("/eureka/apps/SVR-CHANNEL")
+    if err != nil {
+        log.Errorf("err=%s", err.Error())
+    }
+
+    log.Debugf("res=%v", res)
+
 }

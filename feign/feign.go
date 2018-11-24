@@ -6,29 +6,27 @@ import (
     "strings"
     "fmt"
     "sync"
+    "net/url"
+    "github.com/go-resty/resty"
+    "time"
 )
 
 var DefaultFeign = &Feign{
-    appLBClient:     make(map[string]*Lbc),
     discoveryClient: eureka.DefaultClient,
     appUrls:         make(map[string][]string),
 }
 
 type Feign struct {
-    // app => balance instance for sending http requests
-    appLBClient map[string]*Lbc
-
     // Discovery client to get Apps and instances
     discoveryClient eureka.DiscoveryClient
 
     // assign app => urls
     appUrls map[string][]string
 
-    mu sync.RWMutex
-}
+    // ensure some daemon task only run one time
+    once sync.Once
 
-func (t *Feign) Config() *Feign {
-    return t
+    mu sync.RWMutex
 }
 
 // use discovery client to get all registry app => instances
@@ -49,52 +47,95 @@ func (t *Feign) UseUrls(appUrls map[string][]string) *Feign {
         }
 
         for _, u := range urls {
-            u = strings.TrimRight(u, "/")
+            tmpU, err := url.Parse(u)
+            if err != nil {
+                log.Errorf("Invalid url=%s, parse err=%s", u, err.Error())
+                continue
+            }
+
             c := &fasthttp.HostClient{
-                Addr: u,
+                Addr: fmt.Sprintf("%s:%s", tmpU.Hostname(), tmpU.Port()),
             }
             lbc.Clients = append(lbc.Clients, c)
             t.appUrls[app] = append(t.appUrls[app], u)
         }
-        t.appLBClient[app] = NewLbc(&lbc)
     }
 
     return t
 }
 
-// 返回负载均衡的客户端
-func (t *Feign) App(app string) *Lbc {
+// return resty.Client
+func (t *Feign) App(app string) *resty.Client {
     defer func() {
         if r := recover(); r != nil {
-            log.Errorf("catch panic err=%v", r)
+            log.Errorf("App(%s) catch panic err=%v", app, r)
         }
     }()
 
-    t.tryUpdateLBClients(app)
-    return t.appLBClient[app]
+    // daemon to update app urls periodically
+    // only execute once globally
+    t.once.Do(func() {
+        if t.discoveryClient == nil ||
+            len(t.discoveryClient.GetRegistryApps()) == 0 {
+            log.Debugf("no discovery client, no need to update LBClient")
+            return
+        }
+
+        t.updateAppUrlsIntervals()
+    })
+
+    // try update app's urls
+    // if app's urls is exist, do nothing
+    t.tryRefreshAppUrls(app)
+
+    lbc := &Lbc{
+        feign: t,
+        app:   app,
+    }
+    return lbc.pick().client
 }
 
-func (t *Feign) tryUpdateLBClients(app string) {
+// try update app's urls
+// if app's urls is exist, do nothing
+func (t *Feign) tryRefreshAppUrls(app string) {
+    if _, ok := t.GetAppUrls(app); ok {
+        return
+    }
+
     if t.discoveryClient == nil ||
         len(t.discoveryClient.GetRegistryApps()) == 0 {
         log.Debugf("no discovery client, no need to update LBClient")
         return
     }
 
-    registryApps := t.discoveryClient.GetRegistryApps()
-    if _, ok := registryApps[app]; !ok || len(registryApps[app].Instances) == 0 {
-        return
-    }
+    t.updateAppUrls()
+}
 
+// update app urls periodically
+func (t *Feign) updateAppUrlsIntervals() {
+    go func() {
+        for {
+            t.updateAppUrls()
+
+            time.Sleep(time.Second * 60)
+            log.Debugf("Update app urls interval...ok")
+        }
+    }()
+}
+
+// Update app urls from registry apps
+func (t *Feign) updateAppUrls() {
+    registryApps := t.discoveryClient.GetRegistryApps()
     tmpAppUrls := map[string][]string{}
-    for keyApp, appVo := range registryApps {
+    for app, appVo := range registryApps {
         // if app is exist in t.appUrls, check whether app's urls are updated
         // if app's urls are updated, then reset LBClient
-        if _, ok := t.appUrls[keyApp]; ok {
+        if curAppUrls, ok := t.GetAppUrls(app); ok {
             isUpdate := false
             for _, insVo := range appVo.Instances {
                 isExist := false
-                for _, v := range t.appUrls[keyApp] {
+
+                for _, v := range curAppUrls {
                     insHomePageUrl := strings.TrimRight(insVo.HomePageUrl, "/")
                     if v == insHomePageUrl {
                         isExist = true
@@ -108,27 +149,31 @@ func (t *Feign) tryUpdateLBClients(app string) {
                 }
             }
 
-            fmt.Sprintf("%v", isUpdate)
-            tmpAppUrls[keyApp] = make([]string, 0)
-            for _, insVo := range appVo.Instances {
-                tmpAppUrls[keyApp] = append(tmpAppUrls[app], strings.TrimRight(insVo.HomePageUrl, "/"))
+            if isUpdate {
+                tmpAppUrls[app] = make([]string, 0)
+                for _, insVo := range appVo.Instances {
+                    tmpAppUrls[app] = append(tmpAppUrls[app], strings.TrimRight(insVo.HomePageUrl, "/"))
+                }
             }
-            // @TODO Update LBClient
-
-            continue
+        } else {
+            // app are not exist in t.appUrls
+            for _, insVo := range appVo.Instances {
+                tmpAppUrls[app] = append(tmpAppUrls[app], strings.TrimRight(insVo.HomePageUrl, "/"))
+            }
         }
-
-        // app are not exist in t.appUrls
-        for _, insVo := range appVo.Instances {
-            tmpAppUrls[keyApp] = append(tmpAppUrls[app], strings.TrimRight(insVo.HomePageUrl, "/"))
-        }
-        // @TODO Update LBClient
     }
 
     t.UseUrls(tmpAppUrls)
-    log.Debugf("TmpAppUrls, app urls=%v ", tmpAppUrls)
 }
 
-//feign.App("APP_ID_CLIENT_FROM_DNS").Put()
-//feign.App("APP_ID_CLIENT_FROM_DNS").Get()
-//feign.App("APP_ID_CLIENT_FROM_DNS").Post()
+// get app's urls
+func (t *Feign) GetAppUrls(app string) ([]string, bool) {
+    t.mu.RLock()
+    defer t.mu.RUnlock()
+
+    if _, ok := t.appUrls[app]; !ok {
+        return nil, false
+    }
+
+    return t.appUrls[app], true
+}
