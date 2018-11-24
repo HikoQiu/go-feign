@@ -2,18 +2,17 @@ package feign
 
 import (
     "github.com/HikoQiu/go-eureka-client/eureka"
-    "github.com/valyala/fasthttp"
     "strings"
-    "fmt"
-    "sync"
     "net/url"
     "github.com/go-resty/resty"
     "time"
+    "sync"
 )
 
 var DefaultFeign = &Feign{
     discoveryClient: eureka.DefaultClient,
     appUrls:         make(map[string][]string),
+    appNextUrlIndex: make(map[string]*uint32),
 }
 
 type Feign struct {
@@ -22,6 +21,9 @@ type Feign struct {
 
     // assign app => urls
     appUrls map[string][]string
+
+    // Counter for calculate next url'index
+    appNextUrlIndex map[string]*uint32
 
     // ensure some daemon task only run one time
     once sync.Once
@@ -40,24 +42,31 @@ func (t *Feign) UseUrls(appUrls map[string][]string) *Feign {
     t.mu.Lock()
     defer t.mu.Unlock()
 
+    //v := uint32(time.Now().UnixNano())
+    //appNextUrlIndex[t.app] = &v
     for app, urls := range appUrls {
-        var lbc fasthttp.LBClient
-        if t.appUrls[app] == nil {
-            t.appUrls[app] = make([]string, 0)
-        }
 
+        // reset app'urls
+        tmpAppUrls := make([]string, 0)
         for _, u := range urls {
-            tmpU, err := url.Parse(u)
+            _, err := url.Parse(u)
             if err != nil {
                 log.Errorf("Invalid url=%s, parse err=%s", u, err.Error())
                 continue
             }
 
-            c := &fasthttp.HostClient{
-                Addr: fmt.Sprintf("%s:%s", tmpU.Hostname(), tmpU.Port()),
-            }
-            lbc.Clients = append(lbc.Clients, c)
-            t.appUrls[app] = append(t.appUrls[app], u)
+            tmpAppUrls = append(tmpAppUrls, u)
+        }
+
+        if len(tmpAppUrls) == 0 {
+            log.Errorf("Empty valid urls for app=%s, skip to set app's urls", app)
+            continue
+        }
+
+        t.appUrls[app] = tmpAppUrls
+        if t.appNextUrlIndex[app] == nil {
+            v := uint32(time.Now().UnixNano())
+            t.appNextUrlIndex[app] = &v
         }
     }
 
@@ -67,24 +76,23 @@ func (t *Feign) UseUrls(appUrls map[string][]string) *Feign {
 // return resty.Client
 func (t *Feign) App(app string) *resty.Client {
     defer func() {
-        if r := recover(); r != nil {
-            log.Errorf("App(%s) catch panic err=%v", app, r)
+        if err := recover(); err != nil {
+            log.Errorf("App(%s) catch panic err=%v", app, err)
         }
     }()
 
     // daemon to update app urls periodically
     // only execute once globally
     t.once.Do(func() {
-        if t.discoveryClient == nil ||
-            len(t.discoveryClient.GetRegistryApps()) == 0 {
-            log.Debugf("no discovery client, no need to update LBClient")
+        if t.discoveryClient == nil {
+            log.Infof("no discovery client, no need to update appUrls periodically.")
             return
         }
 
         t.updateAppUrlsIntervals()
     })
 
-    // try update app's urls
+    // try update app's urls.
     // if app's urls is exist, do nothing
     t.tryRefreshAppUrls(app)
 
@@ -104,7 +112,7 @@ func (t *Feign) tryRefreshAppUrls(app string) {
 
     if t.discoveryClient == nil ||
         len(t.discoveryClient.GetRegistryApps()) == 0 {
-        log.Debugf("no discovery client, no need to update LBClient")
+        log.Debugf("no discovery client, no need to update app'urls.")
         return
     }
 
@@ -126,15 +134,18 @@ func (t *Feign) updateAppUrlsIntervals() {
 // Update app urls from registry apps
 func (t *Feign) updateAppUrls() {
     registryApps := t.discoveryClient.GetRegistryApps()
-    tmpAppUrls := map[string][]string{}
+    tmpAppUrls := make(map[string][]string)
+
     for app, appVo := range registryApps {
-        // if app is exist in t.appUrls, check whether app's urls are updated
-        // if app's urls are updated, then reset LBClient
-        if curAppUrls, ok := t.GetAppUrls(app); ok {
-            isUpdate := false
+        var isAppAlreadyExist bool
+        var curAppUrls []string
+        var isUpdate bool
+
+        // if app is already exist in t.appUrls, check whether app's urls are updated.
+        // if app's urls are updated, t.appUrls
+        if curAppUrls, isAppAlreadyExist = t.GetAppUrls(app); isAppAlreadyExist {
             for _, insVo := range appVo.Instances {
                 isExist := false
-
                 for _, v := range curAppUrls {
                     insHomePageUrl := strings.TrimRight(insVo.HomePageUrl, "/")
                     if v == insHomePageUrl {
@@ -148,21 +159,18 @@ func (t *Feign) updateAppUrls() {
                     break
                 }
             }
+        }
 
-            if isUpdate {
-                tmpAppUrls[app] = make([]string, 0)
-                for _, insVo := range appVo.Instances {
-                    tmpAppUrls[app] = append(tmpAppUrls[app], strings.TrimRight(insVo.HomePageUrl, "/"))
-                }
-            }
-        } else {
-            // app are not exist in t.appUrls
+        // app are not exist in t.appUrls or app's urls has been update
+        if !isAppAlreadyExist || isUpdate {
+            tmpAppUrls[app] = make([]string, 0)
             for _, insVo := range appVo.Instances {
                 tmpAppUrls[app] = append(tmpAppUrls[app], strings.TrimRight(insVo.HomePageUrl, "/"))
             }
         }
     }
 
+    // update app's urls to feign
     t.UseUrls(tmpAppUrls)
 }
 

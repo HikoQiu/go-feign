@@ -16,15 +16,6 @@ func runEurekaClient() {
     config.EurekaServerUrlContext = "eureka"
     config.EurekaServerPort = "9001"
 
-    // custom logger
-    //eureka.SetLogger(func(level int, format string, a ...interface{}) {
-    //    if level == eureka.LevelError {
-    //        fmt.Println("[custom logger error] " + format, a)
-    //    }else {
-    //        fmt.Println("[custom logger debug] " + format, a)
-    //    }
-    //})
-
     // run eureka client async
     eureka.DefaultClient.Config(config).
         Register("APP_ID_CLIENT_FROM_DNS", 9000).
@@ -67,6 +58,22 @@ func Test_AppUrls(t *testing.T) {
     if err != nil {
         log.Errorf("err=%s", err.Error())
     }
+
+    log.Debugf("res=%v", res)
+
+    res, err = DefaultFeign.App("NOT_EXIST_SERVICE").R().SetHeaders(map[string]string{
+        "Content-Type": "application/json",
+    }).Get("/eureka/apps/SVR-CHANNEL")
+    if err != nil {
+        log.Errorf("err=%s", err.Error())
+    }
+
+    //res, err = DefaultFeign.App("SVR-CHANNEL").R().SetHeaders(map[string]string{
+    //    "Content-Type": "application/json",
+    //}).Get("/eureka/apps/SVR-CHANNEL")
+    //if err != nil {
+    //    log.Errorf("err=%s", err.Error())
+    //}
 
     log.Debugf("res=%v", res)
 
