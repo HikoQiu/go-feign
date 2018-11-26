@@ -9,6 +9,10 @@ import (
     "sync"
 )
 
+const (
+    DEFAULT_REFRESH_APP_URLS_INTERVALS = 30
+)
+
 var DefaultFeign = &Feign{
     discoveryClient: eureka.DefaultClient,
     appUrls:         make(map[string][]string),
@@ -24,6 +28,9 @@ type Feign struct {
 
     // Counter for calculate next url'index
     appNextUrlIndex map[string]*uint32
+
+    // seconds of updating app's urls periodically
+    refreshAppUrlsIntervals int
 
     // ensure some daemon task only run one time
     once sync.Once
@@ -71,6 +78,10 @@ func (t *Feign) UseUrls(appUrls map[string][]string) *Feign {
     }
 
     return t
+}
+
+func (t *Feign) SetRefreshAppUrlsIntervals(intervals int) {
+    t.refreshAppUrlsIntervals = intervals
 }
 
 // return resty.Client
@@ -121,11 +132,15 @@ func (t *Feign) tryRefreshAppUrls(app string) {
 
 // update app urls periodically
 func (t *Feign) updateAppUrlsIntervals() {
+    if t.refreshAppUrlsIntervals <= 0 {
+        t.refreshAppUrlsIntervals = 30
+    }
+
     go func() {
         for {
             t.updateAppUrls()
 
-            time.Sleep(time.Second * 60)
+            time.Sleep(time.Second * time.Duration(t.refreshAppUrlsIntervals))
             log.Debugf("Update app urls interval...ok")
         }
     }()
