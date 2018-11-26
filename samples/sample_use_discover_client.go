@@ -6,8 +6,7 @@ import (
     "github.com/HikoQiu/go-eureka-client/eureka"
 )
 
-
-func runEurekaClient() {
+func runEurekaClient() *eureka.Client {
     config := eureka.GetDefaultEurekaClientConfig()
     config.UseDnsForFetchingServiceUrls = true
     config.Region = "region-cn-hd-1"
@@ -22,6 +21,8 @@ func runEurekaClient() {
     eureka.DefaultClient.Config(config).
         Register("APP_ID_CLIENT_FROM_DNS", 9000).
         Run()
+
+    return eureka.DefaultClient
 }
 
 func main() {
@@ -40,4 +41,3 @@ func main() {
 
     select {}
 }
-
