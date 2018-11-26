@@ -5,7 +5,7 @@ import (
     "github.com/HikoQiu/go-eureka-client/eureka"
 )
 
-func runEurekaClient() {
+func Test_AppUrls(t *testing.T) {
     config := eureka.GetDefaultEurekaClientConfig()
     config.UseDnsForFetchingServiceUrls = true
     config.Region = "region-cn-hd-1"
@@ -20,10 +20,6 @@ func runEurekaClient() {
     eureka.DefaultClient.Config(config).
         Register("APP_ID_CLIENT_FROM_DNS", 9000).
         Run()
-}
-
-func Test_AppUrls(t *testing.T) {
-    runEurekaClient()
 
     lbc := DefaultFeign.App("MS-REGISTRY").R()
     res, err := lbc.SetHeaders(map[string]string{
