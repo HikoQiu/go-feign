@@ -134,7 +134,7 @@ func (t *Feign) tryRefreshAppUrls(app string) {
 // update app urls periodically
 func (t *Feign) updateAppUrlsIntervals() {
     if t.refreshAppUrlsIntervals <= 0 {
-        t.refreshAppUrlsIntervals = 30
+        t.refreshAppUrlsIntervals = DEFAULT_REFRESH_APP_URLS_INTERVALS
     }
 
     go func() {
