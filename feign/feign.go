@@ -4,9 +4,9 @@ import (
     "github.com/HikoQiu/go-eureka-client/eureka"
     "strings"
     "net/url"
-    "github.com/go-resty/resty"
     "time"
     "sync"
+    "gopkg.in/resty.v1"
 )
 
 const (
@@ -95,7 +95,8 @@ func (t *Feign) App(app string) *resty.Client {
     // daemon to update app urls periodically
     // only execute once globally
     t.once.Do(func() {
-        if t.discoveryClient == nil {
+        if t.discoveryClient == nil ||
+            t.discoveryClient.GetInstance() == nil {
             log.Infof("no discovery client, no need to update appUrls periodically.")
             return
         }
