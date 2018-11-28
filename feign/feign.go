@@ -143,6 +143,10 @@ func (t *Feign) updateAppUrlsIntervals() {
 
             time.Sleep(time.Second * time.Duration(t.refreshAppUrlsIntervals))
             log.Debugf("Update app urls interval...ok")
+            for app, urls := range t.appUrls {
+                log.Debugf("app=> %s, urls => %v", app, urls)
+            }
+
         }
     }()
 }
@@ -160,19 +164,23 @@ func (t *Feign) updateAppUrls() {
         // if app is already exist in t.appUrls, check whether app's urls are updated.
         // if app's urls are updated, t.appUrls
         if curAppUrls, isAppAlreadyExist = t.GetAppUrls(app); isAppAlreadyExist {
-            for _, insVo := range appVo.Instances {
-                isExist := false
-                for _, v := range curAppUrls {
-                    insHomePageUrl := strings.TrimRight(insVo.HomePageUrl, "/")
-                    if v == insHomePageUrl {
-                        isExist = true
+            if len(curAppUrls) != len(appVo.Instances) {
+               isUpdate = true
+            }else {
+                for _, insVo := range appVo.Instances {
+                    isExist := false
+                    for _, v := range curAppUrls {
+                        insHomePageUrl := strings.TrimRight(insVo.HomePageUrl, "/")
+                        if v == insHomePageUrl {
+                            isExist = true
+                            break
+                        }
+                    }
+
+                    if !isExist {
+                        isUpdate = true
                         break
                     }
-                }
-
-                if !isExist {
-                    isUpdate = true
-                    break
                 }
             }
         }
